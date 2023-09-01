@@ -1,10 +1,97 @@
-import datetime
-
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import NextcloudOperator
 import discord
 import yaml
 from discord import Interaction
 from discord.ext import commands
-from discord.ui import InputText, Modal
+from discord.ui import InputText, Modal, View, Button
+import random, string
+
+
+# 選択用の選択肢を用意する
+month_num=[i for i in range(1,13,1)]
+weakday_word=["月","火","水","木","金","土","日"]
+document_list=["請求書","精算書","事後請求(請求書&精算書)"]
+    
+#設定ファイルを読み込む
+with open('./config.yaml','r') as yml:
+    yml_conf=yaml.safe_load(yml)
+    bot_token=yml_conf['discord']['BOT_TOKEN']
+    test_guild_ids=yml_conf['discord']['test_guild_ids']
+    reporter_id=yml_conf['discord']['Reporter_id']
+    send_channel_id=yml_conf['discord']['Send_Channel']
+
+#botのインスタンスを生成
+bot = commands.Bot(command_prefix='/',
+                description='会計の業務をお助けします',
+                intents = discord.Intents.all(),
+                help_command=None,
+                activity=discord.Game("Python") 
+)
+
+#ランダムな文字列を６文字で返す
+def randomname(n:int = 6):
+   randlst = [random.choice(string.ascii_letters + string.digits) for i in range(n)]
+   return ''.join(randlst)
+
+#承認・未承認ボタン関連
+class docs_conf_view(View):
+    def __init__(self):
+        super().__init__(
+            timeout=None
+        )
+    
+    @discord.ui.button(label="✓ 承認", style=discord.ButtonStyle.success)
+    async def ok(self, button: Button, interaction: discord.Interaction):
+        modal = docs_conf_Modal("ok")
+        await interaction.response.send_modal(modal=modal)
+
+    @discord.ui.button(label="X 未承認", style=discord.ButtonStyle.danger)
+    async def ng(self, button: Button, interaction: discord.Interaction):
+        modal = docs_conf_Modal("ng")
+        await interaction.response.send_modal(modal=modal)
+        
+# 書類承認用のModal
+class docs_conf_Modal(Modal):
+    def __init__(self, situation):
+        super().__init__(
+            title="書類確認完了",
+            timeout=None
+        )
+        self.situation=situation
+        
+        # modal内で入力してもらうものを用意
+        self.id=InputText(
+            label="申請ID",
+            style=discord.InputTextStyle.short,
+            placeholder="Embedに記載されている「申請ID」を記入",
+            required=True
+        )
+        self.remarks=InputText(
+            label="備考欄",
+            style=discord.InputTextStyle.multiline,
+            placeholder="",
+            required=False
+        )
+        # 上で用意したものをModalに追加する
+        self.add_item(self.id)
+        self.add_item(self.remarks)
+        
+    async def callback(self, interaction: Interaction) -> list:
+        await interaction.response.send_message(f"【{self.id.value}】書類確認完了通知を送信しました。")
+        if self.situation == "ok": 
+            show_embed_docs_conf = discord.Embed(title='書類確認完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(0,255,0))
+            show_embed_docs_conf.add_field(name='申請結果',value="承認", inline=True)
+        elif self.situation == "ng": 
+            show_embed_docs_conf = discord.Embed(title='書類確認完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(255,0,0))
+            show_embed_docs_conf.add_field(name='申請結果',value="未承認", inline=True)
+        show_embed_docs_conf.add_field(name='申請ID', value=self.id.value, inline=True)
+        if len(self.remarks.value) == 0 : show_embed_docs_conf.add_field(name='備考欄', value="特になし", inline=False)
+        else: show_embed_docs_conf.add_field(name='備考欄', value=self.remarks.value, inline=False)
+        # 申請者に対する表示
+        channel = bot.get_channel(int(send_channel_id))
+        await channel.send(embed=show_embed_docs_conf)
 
 # 会計報告用のModal
 class ReportModal(Modal):
@@ -52,38 +139,65 @@ class ReportModal(Modal):
         self.caluculate_list=list(str(self.caluculate.value).split("、"))
         self.content_list=list(str(self.content.value).split("！"))
 
-        if "" != self.claim.value: show_embed.add_field(name=f'請求【{len(self.claim_list)}件】',value=f'{self.claim.value}',inline=False)
-        if "" != self.spending.value: show_embed.add_field(name=f'支出【{len(self.spending_list)}件】',value=f'{self.spending.value}',inline=False)
-        if "" !=  self.caluculate.value: show_embed.add_field(name=f'清算【{len(self.caluculate_list)}件】',value=f'{self.caluculate.value}', inline=False)
+        if "" != self.claim.value: show_embed_report.add_field(name=f'請求【{len(self.claim_list)}件】',value=f'{self.claim.value}',inline=False)
+        if "" != self.spending.value: show_embed_report.add_field(name=f'支出【{len(self.spending_list)}件】',value=f'{self.spending.value}',inline=False)
+        if "" !=  self.caluculate.value: show_embed_report.add_field(name=f'清算【{len(self.caluculate_list)}件】',value=f'{self.caluculate.value}', inline=False)
         for content in self.content_list:
             count+=1
-            show_embed.add_field(name=f'報告【{count}件目】', value=f'・{content}',inline=False)
+            show_embed_report.add_field(name=f'報告【{count}件目】', value=f'・{content}',inline=False)
 
-        await interaction.response.send_message(embed=show_embed)
+        await interaction.response.send_message(embed=show_embed_report)
 
-# 選択用の選択肢を用意する
-month_num=[i for i in range(1,13,1)]
-weakday_word=["月","火","水","木","金","土","日"]
+# 書類承認用のModal
+class ApplicateModal(Modal):
+    def __init__(self):
+        super().__init__(
+            title="書類確認",
+            timeout=None
+        )
+        # modal内で入力してもらうものを用意
+        self.organization=InputText(
+            label="団体名",
+            style=discord.InputTextStyle.short,
+            placeholder="書類の団体名欄のところを記入",
+            required=True
+        )
+        self.remarks=InputText(
+            label="備考欄",
+            style=discord.InputTextStyle.multiline,
+            placeholder="確認する点において注意するべき事があれば記載",
+            required=False
+        )
+        # 上で用意したものをModalに追加する
+        self.add_item(self.organization)
+        self.add_item(self.remarks)
     
-#設定ファイルを読み込む
-with open('./config.yaml','r') as yml:
-    yml_config=yaml.safe_load(yml)
-    bot_token=yml_config['discord']['BOT_TOKEN']
-    test_guild_ids=yml_config['discord']['test_guild_ids']
+    async def callback(self, interaction: Interaction) -> list:
+        # 報告者のIDからUserオブジェクトを取得し後の送信のために変数格納
+        reporter = await bot.fetch_user(reporter_id)
 
-#botのインスタンスを生成
-bot = commands.Bot(command_prefix='/',
-                description='会計の業務をお助けします',
-                intents = discord.Intents.all(),
-                help_command=None,
-                activity=discord.Game("Python") 
-)
+        # embedの内容追加と送信
+        org_val = self.organization.value
+        remarks_val = self.remarks.value
+        show_embed_applicate_reporter.add_field(name='団体名', value=self.organization.value, inline=True)
+        show_embed_applicate.add_field(name='団体名', value=self.organization.value, inline=True)
+        if len(self.remarks.value) == 0 : 
+            show_embed_applicate_reporter.add_field(name='備考欄', value="特になし", inline=False)
+            show_embed_applicate.add_field(name='備考欄', value="特になし", inline=False)
+        else:
+            show_embed_applicate_reporter.add_field(name='備考欄', value=self.remarks.value, inline=False)
+            show_embed_applicate.add_field(name='備考欄', value=self.remarks.value, inline=False)
+
+        # Embedとボタンの送信
+        await interaction.response.send_message(embed=show_embed_applicate)
+        await reporter.send(embed=show_embed_applicate_reporter)
+        await reporter.send(view=docs_conf_view())
 
 # 起動時に実行する処理       
 @bot.event
 async def on_ready():
     print(f'{bot.user} Ready!!')
-
+        
 @bot.slash_command(name="report",description="【確認用】会計報告用のコマンドです。※全体には送信しません。", guild_ids=[test_guild_ids])
 async def report(
     ctx: discord.ApplicationCommand,
@@ -92,22 +206,75 @@ async def report(
     day: discord.Option(int, "何日ですか？(半角数字でお願いします)", required=True),
     weakday: discord.Option(str, "何曜日ですか？", choices=weakday_word, required=True)
 ):
-
     # 引数で指定されたユーザの情報を取得
     who_id = who.id
     user = bot.get_user(who_id)
 
-    global show_embed
-    show_embed = discord.Embed(title='【会計報告】',color=discord.Colour.from_rgb(3,3,3))
-    show_embed.add_field(name='日付', value=f'{month}月{day}日({weakday})', inline=False)
-    show_embed.set_footer(text=user.name,icon_url=user.avatar)
+    global show_embed_report
+    show_embed_report = discord.Embed(title='【会計報告】',color=discord.Colour.from_rgb(3,3,3))
+    show_embed_report.add_field(name='日付', value=f'{month}月{day}日({weakday})', inline=False)
+    show_embed_report.set_footer(text=user.name,icon_url=user.avatar)
 
     modal = ReportModal()
     await ctx.response.send_modal(modal=modal)
+
+@bot.slash_command(name="applicate", description="【書類確認】請求書・精算書の確認申請を行うコマンドです。", guild_ids=[test_guild_ids])
+async def applicate(
+    ctx: discord.ApplicationCommand,
+    who: discord.Option(discord.Member, "申請者名を入力 ※予測変換必ず入力してください", required=True),
+    document: discord.Option(str, "どの資料ですか？", choices=document_list, required=True),
+):
+    # 申請者情報取得
+    who_id = who.id
+    show_user = str(who).replace("#0","")
+    # 現在時刻をJSTで取得
+    current_time = datetime.now(ZoneInfo("Asia/Tokyo")).strftime('%Y年%m月%d日 %H:%M:%S')
+    # 申請IDの取得
+    applicate_id = randomname()
+    # フォルダ名の決定
+    folder_name = f"【{show_user}】{applicate_id}({current_time})"
+    # Use NextcloudOperatorAPI
+    ope = NextcloudOperator.OperatorAPI()
+    res = ope.make_folder(folder_name=folder_name)
+    # 引数で指定されたユーザの情報を取得
+    user = bot.get_user(who_id)
     
+    if res == 201:
+        # successful
 
+        # アップロード先のリンク
+        share_url= f"https://nextcloud.tochiman.com/apps/files/files?dir=/nextcloud-data/{folder_name}"
 
-#discordのhelpコマンドを削除
-bot.remove_command('help')
-#bot起動
-bot.run(bot_token)
+        # 申請者に対するEmbed
+        global show_embed_applicate
+        show_embed_applicate = discord.Embed(title='【書類確認】', description="`アップロード先`にて申請書類を全てアップロードしてください。",color=discord.Colour.from_rgb(3,3,3))
+        show_embed_applicate.add_field(name='申請日時', value=current_time, inline=True)
+        show_embed_applicate.add_field(name='書類種別', value=document, inline=True)
+        show_embed_applicate.add_field(name='リンク', value=f"[アップロード先]({share_url})", inline=True)
+        show_embed_applicate.add_field(name='申請者', value=user.name, inline=True)
+        show_embed_applicate.add_field(name="申請ID", value=applicate_id, inline=True)
+        show_embed_applicate.set_footer(text=user.name,icon_url=user.avatar)
+
+        # 報告者に対するEmbed関連
+        global show_embed_applicate_reporter
+        show_embed_applicate_reporter = discord.Embed(title='【書類確認】', description="https://discord.com/channels/872726821819531354/1145881512689008640で書類の申請が来ました。確認してください。", color=discord.Colour.from_rgb(3,3,3))
+        show_embed_applicate_reporter.add_field(name='申請日時', value=current_time, inline=True)
+        show_embed_applicate_reporter.add_field(name='書類種別', value=document, inline=True)
+        show_embed_applicate_reporter.add_field(name='リンク', value=f"[アップロード先]({share_url})", inline=True)
+        show_embed_applicate_reporter.add_field(name='申請者', value=user.name, inline=True)
+        show_embed_applicate_reporter.add_field(name="申請ID", value=applicate_id, inline=True)
+
+        # 申請者に対するModal
+        modal = ApplicateModal()
+        await ctx.response.send_modal(modal=modal)
+
+    else:
+        show_embed_applicate = discord.Embed(title='【書類確認】エラー', description="フォルダーが作成されませんでした。再度実行していただくか、Bot作成者にお問い合わせください。",color=discord.Colour.from_rgb(3,3,3))
+        show_embed_applicate.set_footer(text=user.name,icon_url=user.avatar)
+        await ctx.response.send_message(embed=show_embed_applicate)
+
+if __name__ == '__main__':
+    #discordのhelpコマンドを削除
+    bot.remove_command('help')
+    #bot起動
+    bot.run(bot_token)
