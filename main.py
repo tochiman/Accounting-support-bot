@@ -8,11 +8,10 @@ from discord.ext import commands
 from discord.ui import InputText, Modal, View, Button
 import random, string
 
-
 # 選択用の選択肢を用意する
 month_num=[i for i in range(1,13,1)]
 weakday_word=["月","火","水","木","金","土","日"]
-document_list=["請求書","精算書","事後請求(請求書&精算書)"]
+document_list=["請求書","精算書","事後請求(請求書&精算書)","その他"]
     
 #設定ファイルを読み込む
 with open('./config.yaml','r') as yml:
@@ -44,23 +43,26 @@ class docs_conf_view(View):
     
     @discord.ui.button(label="✓ 承認", style=discord.ButtonStyle.success)
     async def ok(self, button: Button, interaction: discord.Interaction):
-        modal = docs_conf_Modal("ok")
+        user_id = interaction.user.id
+        modal = docs_conf_Modal("ok", user_id)
         await interaction.response.send_modal(modal=modal)
 
     @discord.ui.button(label="X 未承認", style=discord.ButtonStyle.danger)
     async def ng(self, button: Button, interaction: discord.Interaction):
-        modal = docs_conf_Modal("ng")
+        user_id = interaction.user.id
+        modal = docs_conf_Modal("ng", user_id)
         await interaction.response.send_modal(modal=modal)
         
 # 書類承認用のModal
 class docs_conf_Modal(Modal):
-    def __init__(self, situation):
+    def __init__(self, situation, user_id):
         super().__init__(
             title="書類確認完了",
             timeout=None
         )
         self.situation=situation
-        
+        self.user_id=user_id
+
         # modal内で入力してもらうものを用意
         self.id=InputText(
             label="申請ID",
@@ -77,15 +79,19 @@ class docs_conf_Modal(Modal):
         # 上で用意したものをModalに追加する
         self.add_item(self.id)
         self.add_item(self.remarks)
+
         
     async def callback(self, interaction: Interaction) -> list:
-        await interaction.response.send_message(f"【{self.id.value}】書類確認完了通知を送信しました。")
+        approver = bot.get_user(self.user_id)
+        show_approver = str(approver).replace("#0","")
+        await interaction.response.send_message(f"【{self.id.value}】確認作業完了通知を送信しました。")
         if self.situation == "ok": 
-            show_embed_docs_conf = discord.Embed(title='書類確認完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(0,255,0))
+            show_embed_docs_conf = discord.Embed(title='確認作業完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(0,255,0))
             show_embed_docs_conf.add_field(name='申請結果',value="承認", inline=True)
         elif self.situation == "ng": 
-            show_embed_docs_conf = discord.Embed(title='書類確認完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(255,0,0))
+            show_embed_docs_conf = discord.Embed(title='確認作業完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(255,0,0))
             show_embed_docs_conf.add_field(name='申請結果',value="未承認", inline=True)
+        show_embed_docs_conf.add_field(name='確認者', value=show_approver, inline=True)
         show_embed_docs_conf.add_field(name='申請ID', value=self.id.value, inline=True)
         if len(self.remarks.value) == 0 : show_embed_docs_conf.add_field(name='備考欄', value="特になし", inline=False)
         else: show_embed_docs_conf.add_field(name='備考欄', value=self.remarks.value, inline=False)
@@ -150,11 +156,13 @@ class ReportModal(Modal):
 
 # 書類承認用のModal
 class ApplicateModal(Modal):
-    def __init__(self):
+    def __init__(self, approver):
         super().__init__(
-            title="書類確認",
+            title="確認作業依頼",
             timeout=None
         )
+        self.approver=approver
+
         # modal内で入力してもらうものを用意
         self.organization=InputText(
             label="団体名",
@@ -173,12 +181,6 @@ class ApplicateModal(Modal):
         self.add_item(self.remarks)
     
     async def callback(self, interaction: Interaction) -> list:
-        # 報告者のIDからUserオブジェクトを取得し後の送信のために変数格納
-        reporter = await bot.fetch_user(reporter_id)
-
-        # embedの内容追加と送信
-        org_val = self.organization.value
-        remarks_val = self.remarks.value
         show_embed_applicate_reporter.add_field(name='団体名', value=self.organization.value, inline=True)
         show_embed_applicate.add_field(name='団体名', value=self.organization.value, inline=True)
         if len(self.remarks.value) == 0 : 
@@ -190,8 +192,8 @@ class ApplicateModal(Modal):
 
         # Embedとボタンの送信
         await interaction.response.send_message(embed=show_embed_applicate)
-        await reporter.send(embed=show_embed_applicate_reporter)
-        await reporter.send(view=docs_conf_view())
+        await self.approver.send(embed=show_embed_applicate_reporter)
+        await self.approver.send(view=docs_conf_view())
 
 # 起動時に実行する処理       
 @bot.event
@@ -222,11 +224,14 @@ async def report(
 async def applicate(
     ctx: discord.ApplicationCommand,
     who: discord.Option(discord.Member, "申請者名を入力 ※予測変換必ず入力してください", required=True),
+    approver: discord.Option(discord.Member, "誰に確認してもらいますか？", required=True),
     document: discord.Option(str, "どの資料ですか？", choices=document_list, required=True),
 ):
     # 申請者情報取得
     who_id = who.id
     show_user = str(who).replace("#0","")
+    # 確認者情報取得
+    approver_id = approver.id
     # 現在時刻をJSTで取得
     current_time = datetime.now(ZoneInfo("Asia/Tokyo")).strftime('%Y年%m月%d日 %H:%M:%S')
     # 申請IDの取得
@@ -238,6 +243,7 @@ async def applicate(
     res = ope.make_folder(folder_name=folder_name)
     # 引数で指定されたユーザの情報を取得
     user = bot.get_user(who_id)
+    approver = bot.get_user(approver_id)
     
     if res == 201:
         # successful
@@ -247,29 +253,29 @@ async def applicate(
 
         # 申請者に対するEmbed
         global show_embed_applicate
-        show_embed_applicate = discord.Embed(title='【書類確認】', description="`アップロード先`にて申請書類を全てアップロードしてください。",color=discord.Colour.from_rgb(3,3,3))
+        show_embed_applicate = discord.Embed(title='【確認作業依頼】', description="申請物を`アップロード先`にて全てアップロードしてください。",color=discord.Colour.from_rgb(3,3,3))
         show_embed_applicate.add_field(name='申請日時', value=current_time, inline=True)
-        show_embed_applicate.add_field(name='書類種別', value=document, inline=True)
+        show_embed_applicate.add_field(name='確認物種別', value=document, inline=True)
         show_embed_applicate.add_field(name='リンク', value=f"[アップロード先]({share_url})", inline=True)
-        show_embed_applicate.add_field(name='申請者', value=user.name, inline=True)
+        show_embed_applicate.add_field(name='確認者', value=approver.name, inline=True)
         show_embed_applicate.add_field(name="申請ID", value=applicate_id, inline=True)
         show_embed_applicate.set_footer(text=user.name,icon_url=user.avatar)
 
         # 報告者に対するEmbed関連
         global show_embed_applicate_reporter
-        show_embed_applicate_reporter = discord.Embed(title='【書類確認】', description="https://discord.com/channels/872726821819531354/1145881512689008640で書類の申請が来ました。確認してください。", color=discord.Colour.from_rgb(3,3,3))
+        show_embed_applicate_reporter = discord.Embed(title='【確認作業依頼】', description="確認依頼が来ました。", color=discord.Colour.from_rgb(3,3,3))
         show_embed_applicate_reporter.add_field(name='申請日時', value=current_time, inline=True)
-        show_embed_applicate_reporter.add_field(name='書類種別', value=document, inline=True)
+        show_embed_applicate_reporter.add_field(name='確認物種別', value=document, inline=True)
         show_embed_applicate_reporter.add_field(name='リンク', value=f"[アップロード先]({share_url})", inline=True)
         show_embed_applicate_reporter.add_field(name='申請者', value=user.name, inline=True)
         show_embed_applicate_reporter.add_field(name="申請ID", value=applicate_id, inline=True)
 
         # 申請者に対するModal
-        modal = ApplicateModal()
+        modal = ApplicateModal(approver)
         await ctx.response.send_modal(modal=modal)
 
     else:
-        show_embed_applicate = discord.Embed(title='【書類確認】エラー', description="フォルダーが作成されませんでした。再度実行していただくか、Bot作成者にお問い合わせください。",color=discord.Colour.from_rgb(3,3,3))
+        show_embed_applicate = discord.Embed(title='【確認作業依頼】エラー', description="フォルダーが作成されませんでした。再度実行していただくか、Bot作成者にお問い合わせください。",color=discord.Colour.from_rgb(3,3,3))
         show_embed_applicate.set_footer(text=user.name,icon_url=user.avatar)
         await ctx.response.send_message(embed=show_embed_applicate)
 
