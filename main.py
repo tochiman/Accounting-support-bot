@@ -30,7 +30,7 @@ bot = commands.Bot(command_prefix='/',
 )
 
 #ランダムな文字列を６文字で返す
-def randomname(n:int = 6):
+def randomname(n:int = 4):
    randlst = [random.choice(string.ascii_letters + string.digits) for i in range(n)]
    return ''.join(randlst)
 
@@ -90,12 +90,20 @@ class docs_conf_Modal(Modal):
     async def callback(self, interaction: Interaction) -> list:
         approver = bot.get_user(self.user_id)
         show_approver = str(approver).replace("#0","")
-        await interaction.response.send_message(f"【{self.id.value}】確認作業完了通知を送信しました。")
         if self.situation == "ok": 
+<<<<<<< HEAD
             show_embed_docs_conf = discord.Embed(title='【確認作業完了】', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(0,255,0))
             show_embed_docs_conf.add_field(name='申請結果',value="承認", inline=True)
         elif self.situation == "ng": 
             show_embed_docs_conf = discord.Embed(title='【確認作業完了】', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(255,0,0))
+=======
+            await interaction.response.send_message(f"【承認】「{self.id.value}」確認作業完了通知を送信しました。")
+            show_embed_docs_conf = discord.Embed(title='確認作業完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(0,255,0))
+            show_embed_docs_conf.add_field(name='申請結果',value="承認", inline=True)
+        elif self.situation == "ng": 
+            await interaction.response.send_message(f"【未承認】「{self.id.value}」確認作業完了通知を送信しました。")
+            show_embed_docs_conf = discord.Embed(title='確認作業完了', description='申請された書類は以下の通り確認されました。', colour=discord.Colour.from_rgb(255,0,0))
+>>>>>>> f6640f3 ([Update]本番環境で変更するというバカをしています)
             show_embed_docs_conf.add_field(name='申請結果',value="未承認", inline=True)
         show_embed_docs_conf.add_field(name='承認者', value=show_approver, inline=True)
         show_embed_docs_conf.add_field(name='申請ID', value=self.id.value, inline=True)
