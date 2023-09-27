@@ -53,7 +53,13 @@ class docs_conf_view(View):
         modal = docs_conf_Modal("ng", user_id)
         await interaction.response.send_modal(modal=modal)
         
-# 書類承認用のModal
+#キャンセルボタン関連
+class Cancel_view(Button):
+    async def callback(self, interaction: discord.Interaction):
+        approver = bot.get_user(int(reporter_id))
+        modal = CancelModal(approver, interaction)
+        await interaction.response.send_modal(modal=modal)
+         
 class docs_conf_Modal(Modal):
     def __init__(self, situation, user_id):
         super().__init__(
@@ -190,10 +196,47 @@ class ApplicateModal(Modal):
             show_embed_applicate_reporter.add_field(name='備考欄', value=self.remarks.value, inline=False)
             show_embed_applicate.add_field(name='備考欄', value=self.remarks.value, inline=False)
 
+        # キャンセル機能
+        view = View()
+        delete_button = Cancel_view(label='キャンセル', style=discord.ButtonStyle.gray)
+        view.add_item(delete_button)
+
         # Embedとボタンの送信
-        await interaction.response.send_message(embed=show_embed_applicate)
-        await self.approver.send(embed=show_embed_applicate_reporter)
-        await self.approver.send(view=docs_conf_view())
+        await interaction.response.send_message(view=view, embed=show_embed_applicate)
+        await self.approver.send(embed=show_embed_applicate_reporter, view=docs_conf_view())
+
+
+class CancelModal(Modal):
+    def __init__(self, approver, interaction_before:discord.Interaction):
+        super().__init__(
+            title="【キャンセル】確認作業依頼",
+            timeout=None
+        )
+        self.approver=approver
+
+        # modal内で入力してもらうものを用意
+        self.applicate_id=InputText(
+            label="申請ID",
+            style=discord.InputTextStyle.short,
+            placeholder="",
+            required=True
+        )
+        self.reason=InputText(
+            label="理由",
+            style=discord.InputTextStyle.multiline,
+            placeholder="何かあればこちらに",
+            required=False
+        )
+        # 上で用意したものをModalに追加する
+        self.add_item(self.applicate_id)
+    
+    async def callback(self, interaction: Interaction) -> list:
+        show_embed_cancel = discord.Embed(title="【キャンセル】確認作業依頼", description="下記の確認作業がキャンセルされました", color=discord.Colour.from_rgb(128,128,128))
+        show_embed_cancel.add_field(name="申請ID", value=self.applicate_id.value, inline=False)
+        show_embed_cancel.add_field(name="理由", value=self.reason.value, inline=False)
+        # Embedとボタンの送信
+        await interaction.response.send_message(embed=show_embed_cancel)
+        await self.approver.send(embed=show_embed_cancel)
 
 # 起動時に実行する処理       
 @bot.event
@@ -232,6 +275,7 @@ async def applicate(
     show_user = str(who).replace("#0","")
     # 確認者情報取得
     approver_id = approver.id
+    print(approver_id)
     # 現在時刻をJSTで取得
     current_time = datetime.now(ZoneInfo("Asia/Tokyo")).strftime('%Y年%m月%d日 %H:%M:%S')
     # 申請IDの取得
