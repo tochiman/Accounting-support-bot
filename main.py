@@ -11,7 +11,7 @@ import random, string
 # 選択用の選択肢を用意する
 month_num=[i for i in range(1,13,1)]
 weakday_word=["月","火","水","木","金","土","日"]
-document_list=["請求書","精算書","事後請求(請求書&精算書)","その他"]
+document_list=["請求書(承認書)","精算書","事後請求(請求書&精算書)","その他"]
     
 #設定ファイルを読み込む
 with open('./config.yaml','r') as yml:
